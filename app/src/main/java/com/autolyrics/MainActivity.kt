@@ -3,6 +3,7 @@ package com.autolyrics
 import android.animation.ValueAnimator
 import android.content.ComponentName
 import android.content.Intent
+import android.net.Uri
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -25,11 +26,13 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.widget.SwitchCompat
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.autolyrics.lyrics.LocalLrcStore
 import com.autolyrics.media.MediaListenerService
 import com.autolyrics.media.MediaTracker
 import com.autolyrics.model.AlbumColors
@@ -78,6 +81,21 @@ class MainActivity : AppCompatActivity() {
     private var tapSyncActive = false
     private var tapSyncTargetLineIndex = -1
     private var tapSyncOffsets = mutableListOf<Long>()
+
+    private lateinit var tvLocalFolder: TextView
+
+    private val localFolderPicker =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri != null) {
+                try {
+                    contentResolver.takePersistableUriPermission(
+                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: Exception) { }
+                prefs.edit().putString(LocalLrcStore.PREF_KEY_FOLDER_URI, uri.toString()).apply()
+                updateLocalFolderDisplay()
+            }
+        }
 
     private val fontButtons = mutableMapOf<String, Button>()
     private val scrollResetRunnable = Runnable {
@@ -206,6 +224,25 @@ class MainActivity : AppCompatActivity() {
             aaOffsetMs = 0L
             prefs.edit().putLong("aa_offset_ms", 0L).apply()
             updateAaDelayDisplay()
+        }
+
+        tvLocalFolder = findViewById(R.id.tv_local_folder)
+        updateLocalFolderDisplay()
+
+        findViewById<Button>(R.id.btn_local_folder_choose).setOnClickListener {
+            localFolderPicker.launch(null)
+        }
+        findViewById<Button>(R.id.btn_local_folder_clear).setOnClickListener {
+            val stored = prefs.getString(LocalLrcStore.PREF_KEY_FOLDER_URI, null)
+            if (stored != null) {
+                try {
+                    contentResolver.releasePersistableUriPermission(
+                        Uri.parse(stored), Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: Exception) { }
+                prefs.edit().remove(LocalLrcStore.PREF_KEY_FOLDER_URI).apply()
+            }
+            updateLocalFolderDisplay()
         }
 
         btnTapSync = findViewById(R.id.btn_tap_sync)
@@ -552,6 +589,18 @@ class MainActivity : AppCompatActivity() {
             val targetY = (currentIndex.toFloat() / totalLines * tvLyrics.height).toInt()
             val offset = scrollView.height / 3
             scrollView.smoothScrollTo(0, maxOf(0, targetY - offset))
+        }
+    }
+
+    private fun updateLocalFolderDisplay() {
+        val stored = prefs.getString(LocalLrcStore.PREF_KEY_FOLDER_URI, null)
+        tvLocalFolder.text = if (stored == null) {
+            "Not set"
+        } else {
+            Uri.parse(stored).lastPathSegment
+                ?.substringAfterLast(':')
+                ?.takeIf { it.isNotBlank() }
+                ?: "Folder selected"
         }
     }
 

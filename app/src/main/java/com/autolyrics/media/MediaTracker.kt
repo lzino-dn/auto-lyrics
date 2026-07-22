@@ -9,6 +9,7 @@ import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import com.autolyrics.lyrics.LocalLrcStore
 import com.autolyrics.lyrics.LrcLibClient
 import com.autolyrics.lyrics.LrcParser
 import com.autolyrics.lyrics.LyricsCache
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 class MediaTracker private constructor(context: Context) {
 
+    private val appContext: Context = context.applicationContext
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val handler = Handler(Looper.getMainLooper())
     private val prefs: SharedPreferences =
@@ -259,6 +261,30 @@ class MediaTracker private constructor(context: Context) {
         fetchJob?.cancel()
         fetchJob = scope.launch(Dispatchers.IO) {
             try {
+                val local = try {
+                    LocalLrcStore.getLyrics(appContext, track.title, track.artist)
+                } catch (_: Exception) {
+                    null
+                }
+                if (local != null) {
+                    withContext(Dispatchers.Main) {
+                        if (_state.value.track != track) return@withContext
+                        _state.value = _state.value.copy(
+                            lines = local.lines,
+                            currentIndex = -1,
+                            currentWordIndex = -1,
+                            status = local.status,
+                            source = local.source
+                        )
+                        if (local.status == LyricsStatus.FOUND) {
+                            updateCurrentPosition()
+                        }
+                        translateIfNeeded(local.lines, track)
+                    }
+                    prefetchNextSong()
+                    return@launch
+                }
+
                 val cached = lyricsCache.get(track.title, track.artist)
                 if (cached != null) {
                     val (lines, status, source) = cached
@@ -277,8 +303,13 @@ class MediaTracker private constructor(context: Context) {
                         translateIfNeeded(lines, track)
                     }
 
+                    // Only trust fresh cache entries that actually contain lyrics.
+                    // A cached NOT_FOUND may just be a past network failure, so
+                    // always retry those against the network.
+                    val cacheHasLyrics =
+                        status == LyricsStatus.FOUND || status == LyricsStatus.PLAIN_ONLY
                     val cacheAge = lyricsCache.getAge(track.title, track.artist)
-                    if (cacheAge < CACHE_REFRESH_MS) {
+                    if (cacheHasLyrics && cacheAge < CACHE_REFRESH_MS) {
                         prefetchNextSong()
                         return@launch
                     }
@@ -350,6 +381,7 @@ class MediaTracker private constructor(context: Context) {
                         continue
                     }
 
+                    if (LocalLrcStore.getLyrics(appContext, title, artist) != null) return@launch
                     if (lyricsCache.get(title, artist) != null) return@launch
 
                     val nextTrack = TrackInfo(title, artist, "", 0)
