@@ -29,7 +29,12 @@ object LocalLrcStore {
         val source: String
     )
 
-    fun getLyrics(context: Context, title: String, artist: String): LocalLyrics? {
+    fun getLyrics(
+        context: Context,
+        title: String,
+        artist: String,
+        durationMs: Long = 0L
+    ): LocalLyrics? {
         if (title.isBlank()) return null
         val treeUri = folderUri(context) ?: return null
         val fileUri = try {
@@ -52,6 +57,15 @@ object LocalLrcStore {
             return LocalLyrics(synced, LyricsStatus.FOUND, "Local · Synced")
         }
 
+        // No timestamps in the file: if we know how long the track is,
+        // spread the lines across it (longer lines get more time, blank
+        // lines between stanzas add a pause) so the display still follows
+        // the song approximately.
+        val estimated = estimateTimestamps(content, durationMs)
+        if (estimated != null) {
+            return LocalLyrics(estimated, LyricsStatus.FOUND, "Local · ~Auto-timed")
+        }
+
         val plain = content.lines()
             .filter { it.isNotBlank() }
             .map { line -> LyricLine(0L, line.trim()) }
@@ -59,6 +73,45 @@ object LocalLrcStore {
             return LocalLyrics(plain, LyricsStatus.PLAIN_ONLY, "Local · Plain")
         }
         return null
+    }
+
+    private fun estimateTimestamps(content: String, durationMs: Long): List<LyricLine>? {
+        if (durationMs <= 30_000) return null
+
+        data class Item(val text: String, val gapBefore: Boolean)
+
+        val items = mutableListOf<Item>()
+        var pendingGap = false
+        for (raw in content.lines()) {
+            val line = raw.trim()
+            if (line.isEmpty()) {
+                if (items.isNotEmpty()) pendingGap = true
+                continue
+            }
+            items.add(Item(line, pendingGap))
+            pendingGap = false
+        }
+        if (items.isEmpty()) return null
+
+        val introMs = minOf(12_000L, durationMs / 10)
+        val outroMs = minOf(8_000L, durationMs / 12)
+        val usableMs = (durationMs - introMs - outroMs).coerceAtLeast(1_000L)
+
+        val stanzaGapWeight = 20.0
+        val lineWeights = items.map { it.text.length.coerceAtLeast(8).toDouble() }
+        val totalWeight = lineWeights.sum() +
+            items.count { it.gapBefore } * stanzaGapWeight
+        if (totalWeight <= 0.0) return null
+
+        var acc = 0.0
+        val lines = mutableListOf<LyricLine>()
+        for (i in items.indices) {
+            if (items[i].gapBefore) acc += stanzaGapWeight
+            val startMs = introMs + (acc / totalWeight * usableMs).toLong()
+            lines.add(LyricLine(startMs, items[i].text))
+            acc += lineWeights[i]
+        }
+        return lines
     }
 
     private fun folderUri(context: Context): Uri? {

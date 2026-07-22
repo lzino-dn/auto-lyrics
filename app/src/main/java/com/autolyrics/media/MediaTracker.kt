@@ -262,7 +262,7 @@ class MediaTracker private constructor(context: Context) {
         fetchJob = scope.launch(Dispatchers.IO) {
             try {
                 val local = try {
-                    LocalLrcStore.getLyrics(appContext, track.title, track.artist)
+                    LocalLrcStore.getLyrics(appContext, track.title, track.artist, track.durationMs)
                 } catch (_: Exception) {
                     null
                 }

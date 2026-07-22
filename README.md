@@ -10,6 +10,7 @@ An Android Auto app that displays synced lyrics for the currently playing song, 
 - **Automatic song detection** — picks up whatever is playing via media session APIs
 - **Multi-strategy lyrics lookup** — tries exact match first, falls back to keyword search
 - **Local lyrics folder** — pick a folder on your device (⚙ → Local Lyrics); files named `Artist - Title.lrc` (or `Title.lrc`, `.txt`) are used before any online source, so personal lyrics work offline and for songs missing from LRCLIB
+- **Auto-timing for plain local files** — local files without LRC timestamps are spread across the track duration (longer lines get more time, stanza breaks add a pause), so they still follow the song approximately
 
 ## Architecture
 
